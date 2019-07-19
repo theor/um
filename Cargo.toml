@@ -1,0 +1,8 @@
+[package]
+name = "jit"
+version = "0.1.0"
+authors = ["theor <theo.richart@gmail.com>"]
+edition = "2018"
+
+[dependencies]
+executable_memory = "*"
