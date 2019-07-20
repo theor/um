@@ -1,11 +1,8 @@
 #![feature(raw)]
 
 #[macro_use] extern crate log;
-extern crate env_logger;
+extern crate pretty_env_logger;
 extern crate executable_memory;
-
-use std::collections::HashMap;
-use std::fs::File;
 
 #[derive(Debug)]
 struct Machine {
@@ -49,14 +46,11 @@ impl Machine {
     }
 
     fn array(&self, i: u32) -> &Vec<u32> {
-        self.arrays.get(&i).unwrap()
+        self.arrays.get(i as usize).unwrap()
     }
 
     fn array_mut(&mut self, i: u32) -> &mut Vec<u32> {
-        if !self.arrays.contains_key(&i) {
-            // self.arrays.con
-        }
-        self.arrays.get_mut(&i).unwrap()
+        self.arrays.get_mut(i as usize).unwrap()
     }
 
 /* 1st four:
@@ -67,8 +61,11 @@ D400005B Ortho 1 3 3
 
  */
 
-    pub fn step(&mut self) {
+    pub fn step(&mut self) -> bool {
         let line = (self.array(0))[self.pc];
+        if line == 0xcad1a8b4 {
+            println!("AAAAH");
+        }
         let op = line >> 28;
         let a = (line >> 6) & 7;
         let b = (line >> 3) & 7;
@@ -97,7 +94,7 @@ D400005B Ortho 1 3 3
             //The register A receives the value stored at offset
             //in register C in the array identified by B.
             1 => {
-                debug!("Array Index");
+                warn!("Array Index {:08X}", line);
                 *self.reg_mut(a) = self.array(self.reg(b))[self.reg(c) as usize];
             }
 
@@ -147,7 +144,7 @@ D400005B Ortho 1 3 3
             //   The universal machine stops computation.
             7 => {
                 debug!("Halt");
-                return;
+                return false;
             }
             //   A new array is created with a capacity of platters
             //   commensurate to the value in the register C. This
@@ -156,15 +153,15 @@ D400005B Ortho 1 3 3
             //   exclusively the 0 bit, and that identifies no other
             //   active allocated array, is placed in the B register.
             8 => {
-                debug!("Allocation");
-                let new_array =  Vec::with_capacity(self.reg(c) as usize);
-                self.reg_mut(b) = self.arrays.len();
+                warn!("Allocation {:08X}", line);
+                let new_array =  vec![0; self.reg(c) as usize];
+                *self.reg_mut(b) = self.arrays.len() as u32;
                 self.arrays.push(new_array);
             } 
             //   The array identified by the register C is abandoned.
             //   Future allocations may then reuse that identifier.
             9 => {
-                debug!("Abandonment");
+                warn!("Abandonment {:08X}", line);
                 // assert!(!self.arrays.remove(&self.reg(c)).is_none());
             } 
             //   The value in the register C is displayed on the console
@@ -174,6 +171,9 @@ D400005B Ortho 1 3 3
                 debug!("Output");
                 let chr: char = (self.reg(c) as u8).into();
                 print!("{}", chr);
+
+                use std::io::Write;
+                std::io::stdout().flush().unwrap();
             } 
             //   The universal machine waits for input on the console.
             //   When input arrives, the register C is loaded with the
@@ -183,7 +183,11 @@ D400005B Ortho 1 3 3
             //   where every place is pregnant with the 1 bit.
             11 => {
                 debug!("Input");
-                unreachable!();
+                use std::io::{self, Read};
+                let mut buf = [0];
+                io::stdin().read_exact(&mut buf).unwrap();
+                *self.reg_mut(c) = buf[0] as u32;
+
             } 
             //   The array identified by the B register is duplicated
             //   and the duplicate shall replace the '0' array,
@@ -196,12 +200,14 @@ D400005B Ortho 1 3 3
             //   velocity.
             12 => {
                 debug!("Load Program");
-                let arrb = self.arrays.get(&b);
-                match arrb {
-                    Some(arrb) => {
-                        *self.array_mut(0) = arrb.to_vec();
-                    },
-                    _ => (),
+                if self.reg(b) != 0 {
+                    let arrb = self.arrays.get(self.reg(b) as usize);
+                    match arrb {
+                        Some(arrb) => {
+                            *self.array_mut(0) = arrb.to_vec();
+                        },
+                        _ => (),
+                    }
                 }
                 self.pc = self.reg(c) as usize;
             } 
@@ -216,11 +222,11 @@ D400005B Ortho 1 3 3
             _ => panic!("unknown op {}", op),
         }
         debug!("{}", self);
+        true
     }
 }
 
 use executable_memory::ExecutableMemory;
-use std::mem;
 
 trait ExecutableMemoryExt {
     fn copy_from_slice_at(&mut self, index: usize, src: &[u8]);
@@ -249,7 +255,7 @@ fn from_bytes<'a>(buf: &'a [u8]) -> Vec<u32> {
 }
 
 fn main() {
-    env_logger::init();
+    pretty_env_logger::init();
     let mut m = Machine::new();
 
     for arg in std::env::args().skip(1) {
@@ -271,7 +277,9 @@ fn main() {
 // let mut i = 0;
     loop {
         // println!("{}", i);
-        m.step();
+        if !m.step(){
+            break;
+        }
         // i += 1;
         // if i >= 100 { break; }
     }
