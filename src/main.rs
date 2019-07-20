@@ -10,7 +10,7 @@ use std::fs::File;
 #[derive(Debug)]
 struct Machine {
     pub regs: [u32; 8],
-    pub arrays: HashMap<u32, Vec<u32>>,
+    pub arrays: Vec<Vec<u32>>,
     pub pc: usize,
 }
 
@@ -157,13 +157,15 @@ D400005B Ortho 1 3 3
             //   active allocated array, is placed in the B register.
             8 => {
                 debug!("Allocation");
-                assert_eq!(self.arrays.insert(self.reg(b), Vec::with_capacity(self.reg(c) as usize)), None);
+                let new_array =  Vec::with_capacity(self.reg(c) as usize);
+                self.reg_mut(b) = self.arrays.len();
+                self.arrays.push(new_array);
             } 
             //   The array identified by the register C is abandoned.
             //   Future allocations may then reuse that identifier.
             9 => {
                 debug!("Abandonment");
-                assert!(!self.arrays.remove(&self.reg(c)).is_none());
+                // assert!(!self.arrays.remove(&self.reg(c)).is_none());
             } 
             //   The value in the register C is displayed on the console
             //   immediately. Only values between and including 0 and 255
