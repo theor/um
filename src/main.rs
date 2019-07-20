@@ -1,5 +1,7 @@
 #![feature(raw)]
 
+#[macro_use] extern crate log;
+extern crate env_logger;
 extern crate executable_memory;
 
 use std::collections::HashMap;
@@ -15,7 +17,7 @@ struct Machine {
 use std::fmt;
 impl fmt::Display for Machine {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "  pc {}", self.pc)?;
+        write!(f, "    pc {}", self.pc)?;
         for i in 0..8 {
             write!(f, " reg{}:{}", i, self.regs[i])?;
         }
@@ -37,7 +39,7 @@ impl Machine {
         self.arrays
             .insert(0, Vec::from_iter(program.iter().cloned()));
     }
-    fn reg(&mut self, i: u32) -> u32 {
+    fn reg(&self, i: u32) -> u32 {
         self.regs[i as usize]
     }
 
@@ -57,14 +59,29 @@ impl Machine {
         self.arrays.get_mut(&i).unwrap()
     }
 
+/* 1st four:
+080000D0 Cmov 3 2 0
+300000C0 Add 3 0 0
+D2000014 Ortho 0 2 4
+D400005B Ortho 1 3 3
+
+ */
+
     pub fn step(&mut self) {
         let line = (self.array(0))[self.pc];
         let op = line >> 28;
         let a = (line >> 6) & 7;
         let b = (line >> 3) & 7;
         let c = (line >> 0) & 7;
-        println!("  line {:032b} op {:04b} a{:b} b{:x} c{:x}", line, op, a, b, c);
-        println!("{}", self);
+        // println!("  line {:032b} op {:04b} a{:b} b{:x} c{:x}", line, op, a, b, c);
+        use log::Level;
+
+        if log_enabled!(Level::Debug) {
+            debug!("{:08x} op {:04b} a{} b{} c{}", line, op, a, b, c);
+        } else {
+            info!("{:08x}", line);
+        }
+        // print!("  ");
         self.pc += 1;
 
         match op {
@@ -72,36 +89,41 @@ impl Machine {
             //The register A receives the value in register B,
             //unless the register C contains 0.
             0 => {
-                println!("Conditional Move");
-                if a != 0 {
+                debug!("Conditional Move ");
+                if self.reg(c) != 0 {
                     self.regs[a as usize] = self.regs[b as usize];
                 }
             }
             //The register A receives the value stored at offset
             //in register C in the array identified by B.
             1 => {
-                println!("Array Index");
-                self.regs[a as usize] = self.array(b)[c as usize];
+                debug!("Array Index");
+                *self.reg_mut(a) = self.array(self.reg(b))[self.reg(c) as usize];
             }
 
             //The array identified by A is amended at the offset
             //in register B to store the value in register C.
             2 => {
-                println!("Array Amendment");
-                self.array_mut(a)[b as usize] = self.regs[c as usize];
+                debug!("Array Amendment");
+                let rb = self.reg(b);
+                self.array_mut(self.reg(a))[rb as usize] = self.reg(c);
             }
 
             //The register A receives the value in register B plus
             //the value in register C, modulo 2^32.
             3 => {
-                println!("Addition");
-                *self.reg_mut(a) = self.reg(b) + self.reg(c);
+                use std::num::Wrapping;
+                debug!("Addition");
+                *self.reg_mut(a) = (Wrapping(self.reg(b)) + Wrapping(self.reg(c))).0;
             }
+
 
             //The register A receives the value in register B times
             //the value in register C, modulo 2^32.
             4 => {
-                println!("Multiplication");
+                use std::num::Wrapping;
+                debug!("Multiplication");
+                *self.reg_mut(a) = (Wrapping(self.reg(b)) * Wrapping(self.reg(c))).0;
             }
 
             //The register A receives the value in register B
@@ -109,35 +131,47 @@ impl Machine {
             //each quantity is treated treated as an unsigned 32
             //bit number.
             5 => {
-                println!("Division");
+                debug!("Division");
+                *self.reg_mut(a) = self.reg(b) / self.reg(c);
             }
 
+            //  Each bit in the register A receives the 1 bit if
+            //  either register B or register C has a 0 bit in that
+            //  position.  Otherwise the bit in register A receives
+            //  the 0 bit.
             6 => {
-                println!("Not-And");
+                debug!("Not-And");
+                *self.reg_mut(a) = !(self.reg(b) & self.reg(c));
             }
- //   The universal machine stops computation.
+
+            //   The universal machine stops computation.
             7 => {
-                println!("Halt");
+                debug!("Halt");
+                return;
             }
-//   A new array is created with a capacity of platters
+            //   A new array is created with a capacity of platters
             //   commensurate to the value in the register C. This
             //   new array is initialized entirely with platters
             //   holding the value 0. A bit pattern not consisting of
             //   exclusively the 0 bit, and that identifies no other
             //   active allocated array, is placed in the B register.
             8 => {
-                println!("Allocation");
+                debug!("Allocation");
+                assert_eq!(self.arrays.insert(self.reg(b), Vec::with_capacity(self.reg(c) as usize)), None);
             } 
             //   The array identified by the register C is abandoned.
             //   Future allocations may then reuse that identifier.
             9 => {
-                println!("Abandonment");
+                debug!("Abandonment");
+                assert!(!self.arrays.remove(&self.reg(c)).is_none());
             } 
             //   The value in the register C is displayed on the console
             //   immediately. Only values between and including 0 and 255
             //   are allowed.
             10 => {
-                println!("Output");
+                debug!("Output");
+                let chr: char = (self.reg(c) as u8).into();
+                print!("{}", chr);
             } 
             //   The universal machine waits for input on the console.
             //   When input arrives, the register C is loaded with the
@@ -146,7 +180,8 @@ impl Machine {
             //   register C is endowed with a uniform value pattern
             //   where every place is pregnant with the 1 bit.
             11 => {
-                println!("Input");
+                debug!("Input");
+                unreachable!();
             } 
             //   The array identified by the B register is duplicated
             //   and the duplicate shall replace the '0' array,
@@ -158,26 +193,27 @@ impl Machine {
             //   loading, and shall be handled with the utmost
             //   velocity.
             12 => {
-                println!("Load Program");
+                debug!("Load Program");
                 let arrb = self.arrays.get(&b);
                 match arrb {
                     Some(arrb) => {
                         *self.array_mut(0) = arrb.to_vec();
-                        self.pc = c as usize;
                     },
                     _ => (),
                 }
+                self.pc = self.reg(c) as usize;
             } 
             //    The value indicated is loaded into the register A
             //   forthwith.
             13 => {
-                let a = op & 0x0E00_0000 >> 25;
-                let value = op & 0x01FF_FFFF;
-                println!("Orthography A:{} Value:{}", a, value);
+                let a = (line >> 25) & 0b111;
+                let value = line & 0x1FFFFFF;
+                debug!("Orthography A:{} Value:{}", a, value);
                 self.regs[a as usize] = value; 
             }
             _ => panic!("unknown op {}", op),
         }
+        debug!("{}", self);
     }
 }
 
@@ -203,17 +239,15 @@ impl ExecutableMemoryExt for ExecutableMemory {
 fn from_bytes<'a>(buf: &'a [u8]) -> Vec<u32> {
     let mut v = Vec::with_capacity(buf.len() / 4);
     for x in buf.chunks_exact(4) {
-        
-        let mut a: [u8; 4] = Default::default();
-        a.copy_from_slice(x);
-        let u: u32 = u32::from_be_bytes(a);
+        let word: u32 = ((x[0] as u32) << 24) | ((x[1] as u32) << 16) | ((x[2] as u32) << 8) | (x[3] as u32);
         // println!("{:x?} {:x}", x, u);
-        v.push(u);
+        v.push(word);
     }
     v
 }
 
 fn main() {
+    env_logger::init();
     let mut m = Machine::new();
 
     for arg in std::env::args().skip(1) {
@@ -232,8 +266,12 @@ fn main() {
         }
     }
 
+// let mut i = 0;
     loop {
+        // println!("{}", i);
         m.step();
+        // i += 1;
+        // if i >= 100 { break; }
     }
 
     // let mut memory = ExecutableMemory::default(); // Page size 1
