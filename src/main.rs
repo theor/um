@@ -7,6 +7,7 @@ extern crate executable_memory;
 #[derive(Debug)]
 struct Machine {
     pub regs: [u32; 8],
+    pub array0: Vec<u32>,
     pub arrays: Vec<Vec<u32>>,
     pub pc: usize,
 }
@@ -26,15 +27,15 @@ impl Machine {
     pub fn new() -> Self {
         Self {
             regs: [0u32; 8],
-            arrays: std::default::Default::default(),
+            array0: Vec::default(),
+            arrays: vec![Vec::default(); 1],
             pc: 0,
         }
     }
 
     pub fn load_program(&mut self, program: &[u32]) {
         use std::iter::FromIterator;
-        self.arrays
-            .insert(0, Vec::from_iter(program.iter().cloned()));
+        self.array0 = Vec::from_iter(program.iter().cloned());
     }
     fn reg(&self, i: u32) -> u32 {
         self.regs[i as usize]
@@ -46,11 +47,19 @@ impl Machine {
     }
 
     fn array(&self, i: u32) -> &Vec<u32> {
-        self.arrays.get(i as usize).unwrap()
+        if i == 0 { 
+            &self.array0
+        } else {
+            self.arrays.get(i as usize).unwrap()
+        }
     }
 
     fn array_mut(&mut self, i: u32) -> &mut Vec<u32> {
-        self.arrays.get_mut(i as usize).unwrap()
+        if i == 0 { 
+            &mut self.array0
+        } else {
+            self.arrays.get_mut(i as usize).unwrap()
+        }
     }
 
 /* 1st four:
@@ -62,7 +71,7 @@ D400005B Ortho 1 3 3
  */
 
     pub fn step(&mut self) -> bool {
-        let line = (self.array(0))[self.pc];
+        let line = self.array0[self.pc];
         if line == 0xcad1a8b4 {
             println!("AAAAH");
         }
@@ -201,13 +210,8 @@ D400005B Ortho 1 3 3
             12 => {
                 debug!("Load Program");
                 if self.reg(b) != 0 {
-                    let arrb = self.arrays.get(self.reg(b) as usize);
-                    match arrb {
-                        Some(arrb) => {
-                            *self.array_mut(0) = arrb.to_vec();
-                        },
-                        _ => (),
-                    }
+                    let arrb = self.array(self.reg(b));
+                    *self.array_mut(0) = arrb.to_vec();
                 }
                 self.pc = self.reg(c) as usize;
             } 

@@ -6,6 +6,7 @@ edition = "2018"
 
 [dependencies]
 executable_memory = "*"
-log = {version = "*", features = ["release_max_level_off"] }
+# log = {version = "*", features = ["release_max_level_off"] }
+log = {version = "*" }
 # env_logger = "*"
 pretty_env_logger = "*"
