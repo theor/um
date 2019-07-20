@@ -4,11 +4,14 @@
 extern crate pretty_env_logger;
 extern crate executable_memory;
 
+use std::collections::VecDeque;
+
 #[derive(Debug)]
 struct Machine {
     pub regs: [u32; 8],
     pub array0: Vec<u32>,
     pub arrays: Vec<Vec<u32>>,
+    pub freelist: VecDeque<u32>,
     pub pc: usize,
 }
 
@@ -29,6 +32,7 @@ impl Machine {
             regs: [0u32; 8],
             array0: Vec::default(),
             arrays: vec![Vec::default(); 1],
+            freelist: VecDeque::default(),
             pc: 0,
         }
     }
@@ -83,9 +87,9 @@ D400005B Ortho 1 3 3
         use log::Level;
 
         if log_enabled!(Level::Debug) {
-            debug!("{:08x} op {:04b} a{} b{} c{}", line, op, a, b, c);
+            trace!("{:08x} op {:04b} a{} b{} c{}", line, op, a, b, c);
         } else {
-            info!("{:08x}", line);
+            debug!("{:08x}", line);
         }
         // print!("  ");
         self.pc += 1;
@@ -95,7 +99,7 @@ D400005B Ortho 1 3 3
             //The register A receives the value in register B,
             //unless the register C contains 0.
             0 => {
-                debug!("Conditional Move ");
+                trace!("Conditional Move ");
                 if self.reg(c) != 0 {
                     self.regs[a as usize] = self.regs[b as usize];
                 }
@@ -103,14 +107,14 @@ D400005B Ortho 1 3 3
             //The register A receives the value stored at offset
             //in register C in the array identified by B.
             1 => {
-                warn!("Array Index {:08X}", line);
+                info!("Array Index {:08X}", line);
                 *self.reg_mut(a) = self.array(self.reg(b))[self.reg(c) as usize];
             }
 
             //The array identified by A is amended at the offset
             //in register B to store the value in register C.
             2 => {
-                debug!("Array Amendment");
+                trace!("Array Amendment");
                 let rb = self.reg(b);
                 self.array_mut(self.reg(a))[rb as usize] = self.reg(c);
             }
@@ -119,7 +123,7 @@ D400005B Ortho 1 3 3
             //the value in register C, modulo 2^32.
             3 => {
                 use std::num::Wrapping;
-                debug!("Addition");
+                trace!("Addition");
                 *self.reg_mut(a) = (Wrapping(self.reg(b)) + Wrapping(self.reg(c))).0;
             }
 
@@ -128,7 +132,7 @@ D400005B Ortho 1 3 3
             //the value in register C, modulo 2^32.
             4 => {
                 use std::num::Wrapping;
-                debug!("Multiplication");
+                trace!("Multiplication");
                 *self.reg_mut(a) = (Wrapping(self.reg(b)) * Wrapping(self.reg(c))).0;
             }
 
@@ -137,7 +141,7 @@ D400005B Ortho 1 3 3
             //each quantity is treated treated as an unsigned 32
             //bit number.
             5 => {
-                debug!("Division");
+                trace!("Division");
                 *self.reg_mut(a) = self.reg(b) / self.reg(c);
             }
 
@@ -146,13 +150,13 @@ D400005B Ortho 1 3 3
             //  position.  Otherwise the bit in register A receives
             //  the 0 bit.
             6 => {
-                debug!("Not-And");
+                trace!("Not-And");
                 *self.reg_mut(a) = !(self.reg(b) & self.reg(c));
             }
 
             //   The universal machine stops computation.
             7 => {
-                debug!("Halt");
+                trace!("Halt");
                 return false;
             }
             //   A new array is created with a capacity of platters
@@ -163,21 +167,38 @@ D400005B Ortho 1 3 3
             //   active allocated array, is placed in the B register.
             8 => {
                 warn!("Allocation {:08X}", line);
-                let new_array =  vec![0; self.reg(c) as usize];
-                *self.reg_mut(b) = self.arrays.len() as u32;
-                self.arrays.push(new_array);
+                let size = self.reg(c);
+                match self.freelist.pop_front(){
+                    None => {
+                        let new_array =  vec![0; size as usize];
+                        warn!("  New Alloc size={} b={} {:?} count {}", size, self.arrays.len(), self.freelist, self.arrays.len());
+                        *self.reg_mut(b) = self.arrays.len() as u32;
+                        self.arrays.push(new_array);
+                    },
+                    Some(i) => {
+                        assert!(i != 0);
+                        *self.reg_mut(b) = i as u32;
+                        // self.array_mut(i).resize(size as usize, 0);
+                        *self.array_mut(i) = vec![0; size as usize];
+                        assert_eq!(size as usize, self.array(i).len());
+                        // println!("reuse at {} exp size {} act {}", i, size, self.array(i).len());
+                        warn!("  REUSE Alloc size={} b={} {:?}", size, i, self.freelist);
+                    },
+                }
             } 
             //   The array identified by the register C is abandoned.
             //   Future allocations may then reuse that identifier.
             9 => {
                 warn!("Abandonment {:08X}", line);
+                self.freelist.push_back(self.reg(c));
+                warn!("  Freelist: {:?}", self.freelist);
                 // assert!(!self.arrays.remove(&self.reg(c)).is_none());
             } 
             //   The value in the register C is displayed on the console
             //   immediately. Only values between and including 0 and 255
             //   are allowed.
             10 => {
-                debug!("Output");
+                trace!("Output");
                 let chr: char = (self.reg(c) as u8).into();
                 print!("{}", chr);
 
@@ -191,7 +212,7 @@ D400005B Ortho 1 3 3
             //   register C is endowed with a uniform value pattern
             //   where every place is pregnant with the 1 bit.
             11 => {
-                debug!("Input");
+                trace!("Input");
                 use std::io::{self, Read};
                 let mut buf = [0];
                 io::stdin().read_exact(&mut buf).unwrap();
@@ -208,10 +229,10 @@ D400005B Ortho 1 3 3
             //   loading, and shall be handled with the utmost
             //   velocity.
             12 => {
-                debug!("Load Program");
+                trace!("Load Program");
                 if self.reg(b) != 0 {
                     let arrb = self.array(self.reg(b));
-                    *self.array_mut(0) = arrb.to_vec();
+                    *self.array_mut(0) = arrb.to_owned();
                 }
                 self.pc = self.reg(c) as usize;
             } 
@@ -220,12 +241,12 @@ D400005B Ortho 1 3 3
             13 => {
                 let a = (line >> 25) & 0b111;
                 let value = line & 0x1FFFFFF;
-                debug!("Orthography A:{} Value:{}", a, value);
+                trace!("Orthography A:{} Value:{}", a, value);
                 self.regs[a as usize] = value; 
             }
             _ => panic!("unknown op {}", op),
         }
-        debug!("{}", self);
+        trace!("{}", self);
         true
     }
 }
