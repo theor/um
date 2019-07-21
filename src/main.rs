@@ -4,6 +4,12 @@
 extern crate pretty_env_logger;
 extern crate executable_memory;
 
+extern crate rustyline;
+extern crate termcolor;
+
+use rustyline::error::ReadlineError;
+use rustyline::Editor;
+
 use std::collections::VecDeque;
 
 #[derive(Debug)]
@@ -13,6 +19,7 @@ struct Machine {
     pub arrays: Vec<Vec<u32>>,
     pub freelist: VecDeque<u32>,
     pub pc: usize,
+    input_buffer: String,
 }
 
 use std::fmt;
@@ -34,6 +41,7 @@ impl Machine {
             arrays: vec![Vec::default(); 1],
             freelist: VecDeque::default(),
             pc: 0,
+            input_buffer: String::default(),
         }
     }
 
@@ -74,7 +82,7 @@ D400005B Ortho 1 3 3
 
  */
 
-    pub fn step(&mut self, out: &mut std::io::BufWriter<std::fs::File>) -> bool {
+    pub fn step(&mut self, out: &mut std::io::BufWriter<std::fs::File>, rl: &mut Editor<()>) -> bool {
         let line = self.array0[self.pc];
         let op = line >> 28;
         let a = (line >> 6) & 7;
@@ -163,12 +171,12 @@ D400005B Ortho 1 3 3
             //   exclusively the 0 bit, and that identifies no other
             //   active allocated array, is placed in the B register.
             8 => {
-                warn!("Allocation {:08X}", line);
+                trace!("Allocation {:08X}", line);
                 let size = self.reg(c);
                 match self.freelist.pop_front(){
                     None => {
                         let new_array =  vec![0; size as usize];
-                        warn!("  New Alloc size={} b={} {:?} count {}", size, self.arrays.len(), self.freelist, self.arrays.len());
+                        trace!("  New Alloc size={} b={} {:?} count {}", size, self.arrays.len(), self.freelist, self.arrays.len());
                         *self.reg_mut(b) = self.arrays.len() as u32;
                         self.arrays.push(new_array);
                     },
@@ -179,16 +187,16 @@ D400005B Ortho 1 3 3
                         *self.array_mut(i) = vec![0; size as usize];
                         assert_eq!(size as usize, self.array(i).len());
                         // println!("reuse at {} exp size {} act {}", i, size, self.array(i).len());
-                        warn!("  REUSE Alloc size={} b={} {:?}", size, i, self.freelist);
+                        trace!("  REUSE Alloc size={} b={} {:?}", size, i, self.freelist);
                     },
                 }
             } 
             //   The array identified by the register C is abandoned.
             //   Future allocations may then reuse that identifier.
             9 => {
-                warn!("Abandonment {:08X}", line);
+                trace!("Abandonment {:08X}", line);
                 self.freelist.push_back(self.reg(c));
-                warn!("  Freelist: {:?}", self.freelist);
+                trace!("  Freelist: {:?}", self.freelist);
                 // assert!(!self.arrays.remove(&self.reg(c)).is_none());
             } 
             //   The value in the register C is displayed on the console
@@ -211,10 +219,43 @@ D400005B Ortho 1 3 3
             //   where every place is pregnant with the 1 bit.
             11 => {
                 trace!("Input");
-                use std::io::{self, Read};
-                let mut buf = [0];
-                io::stdin().read_exact(&mut buf).unwrap();
-                *self.reg_mut(c) = buf[0] as u32;
+
+                if self.input_buffer.len() == 0 {
+                    loop {
+                        use termcolor::{Color, ColorChoice, ColorSpec, StandardStream, WriteColor};
+
+                        let mut stdout = StandardStream::stdout(ColorChoice::Auto);
+                        stdout.set_color(ColorSpec::new().set_fg(Some(Color::Green))).unwrap();
+                        let readline = rl.readline(">> ");
+                        stdout.reset().unwrap();
+
+                        match readline {
+                            Ok(ref read_line) if read_line.len() > 0 => {
+                                rl.add_history_entry(read_line.as_str());
+                                self.input_buffer = format!("{}\n", read_line);
+                                break
+                            },
+                            Err(ReadlineError::Interrupted) => {
+                                println!("CTRL-C");
+                            },
+                            Err(ReadlineError::Eof) => {
+                                println!("CTRL-D");
+                                return false;
+                            },
+                            _ => (),
+                        }
+                    }
+                }
+
+                let chr = self.input_buffer.remove(0);
+                *self.reg_mut(c) = chr as u32;
+
+        
+
+                // use std::io::{self, Read};
+                // let mut buf = [0];
+                // io::stdin().read_exact(&mut buf).unwrap();
+                // *self.reg_mut(c) = buf[0] as u32;
 
             } 
             //   The array identified by the B register is duplicated
@@ -301,6 +342,13 @@ fn main() {
     use std::fs::OpenOptions;
     use std::io::BufWriter;
 
+    // `()` can be used when no completer is required
+    let mut rl = Editor::<()>::new();
+    if rl.load_history("history.txt").is_err() {
+        println!("No previous history.");
+    }
+
+
     let mut out = OpenOptions::new()
         .write(true)
         .create(true)
@@ -309,12 +357,13 @@ fn main() {
 // let mut i = 0;
     loop {
         // println!("{}", i);
-        if !m.step(&mut out){
+        if !m.step(&mut out, &mut rl){
             break;
         }
         // i += 1;
         // if i >= 100 { break; }
     }
+    rl.save_history("history.txt").unwrap();
 
     // let mut memory = ExecutableMemory::default(); // Page size 1
     // memory.fill(0xc3);

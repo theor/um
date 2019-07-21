@@ -10,3 +10,6 @@ executable_memory = "*"
 log = {version = "*" }
 # env_logger = "*"
 pretty_env_logger = "*"
+
+rustyline = "*"
+termcolor = "*"
