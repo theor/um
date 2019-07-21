@@ -74,11 +74,8 @@ D400005B Ortho 1 3 3
 
  */
 
-    pub fn step(&mut self) -> bool {
+    pub fn step(&mut self, out: &mut std::io::BufWriter<std::fs::File>) -> bool {
         let line = self.array0[self.pc];
-        if line == 0xcad1a8b4 {
-            println!("AAAAH");
-        }
         let op = line >> 28;
         let a = (line >> 6) & 7;
         let b = (line >> 3) & 7;
@@ -201,9 +198,10 @@ D400005B Ortho 1 3 3
                 trace!("Output");
                 let chr: char = (self.reg(c) as u8).into();
                 print!("{}", chr);
+                std::io::stdout().flush().unwrap();               
 
                 use std::io::Write;
-                std::io::stdout().flush().unwrap();
+                // out.write(&[chr as u8]).unwrap();
             } 
             //   The universal machine waits for input on the console.
             //   When input arrives, the register C is loaded with the
@@ -291,18 +289,27 @@ fn main() {
                 let mut content = Vec::new();
                 f.read_to_end(&mut content).unwrap();
                 let content_u32: Vec<u32> = from_bytes(content.as_slice());
+                
                 m.load_program(content_u32.as_slice());
-                // println!("{:x?}", m.array(0));
+                println!("{}", m.array0.len());
                 break;
             }
             _ => continue,
         }
     }
 
+    use std::fs::OpenOptions;
+    use std::io::BufWriter;
+
+    let mut out = OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open("out.bin.um").map(|f| BufWriter::with_capacity(128, f)).unwrap();
 // let mut i = 0;
     loop {
         // println!("{}", i);
-        if !m.step(){
+        if !m.step(&mut out){
             break;
         }
         // i += 1;
