@@ -322,21 +322,30 @@ fn main() {
     pretty_env_logger::init();
     let mut m = Machine::new();
 
+    let mut file = None;
     for arg in std::env::args().skip(1) {
-        println!("{}", arg);
-        match std::fs::File::open(arg) {
-            Ok(mut f) => {
-                use std::io::Read;
-                let mut content = Vec::new();
-                f.read_to_end(&mut content).unwrap();
-                let content_u32: Vec<u32> = from_bytes(content.as_slice());
-                
-                m.load_program(content_u32.as_slice());
-                println!("{}", m.array0.len());
-                break;
-            }
-            _ => continue,
+        if arg.starts_with("-") {
+            println!("{}", arg);
+        } else {
+            file = Some(arg.to_owned());
         }
+    }
+
+    if file.is_none() {
+        return;
+    }
+
+    match std::fs::File::open(file.unwrap()) {
+        Ok(mut f) => {
+            use std::io::Read;
+            let mut content = Vec::new();
+            f.read_to_end(&mut content).unwrap();
+            let content_u32: Vec<u32> = from_bytes(content.as_slice());
+            
+            m.load_program(content_u32.as_slice());
+            println!("{}", m.array0.len());
+        }
+        _ => return,
     }
 
     use std::fs::OpenOptions;

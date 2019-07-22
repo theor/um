@@ -13,3 +13,6 @@ pretty_env_logger = "*"
 
 rustyline = "*"
 termcolor = "*"
+
+[profile.release]
+debug = true
